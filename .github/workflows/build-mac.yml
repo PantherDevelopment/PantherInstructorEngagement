@@ -94,6 +94,7 @@ jobs:
             --icon "assets/icon.icns" \
             --add-data "assets:assets" \
             --add-data "config.yaml:." \
+            --add-data "VERSION:." \
             --add-data "src:src" \
             --osx-bundle-identifier "edu.fit.pantherinstructorengagement" \
             --hidden-import "PyQt6" \
