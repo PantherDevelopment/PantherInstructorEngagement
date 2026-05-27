@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# PyInstaller
+*.spec
+dist/
+build/
+
+# Credentials / local config (never commit these)
+*.key
+*.pem
+*.p12
+
+# Test/proof scripts (not for distribution)
+proof_*.py
+test_*.py
+PHASE*.md
+
+# Build outputs
+dist/
+build/
+Output/
+*.iconset/
+assets/icon.icns
+assets/icon_512.png
