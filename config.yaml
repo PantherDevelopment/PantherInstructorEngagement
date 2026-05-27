@@ -1,0 +1,36 @@
+# Panther Instructor Engagement Reports - Configuration
+
+canvas:
+  base_url: ''  # Will be set during first-time setup
+  api_version: 'v1'
+  request_timeout: 30
+
+ui:
+  colors:
+    primary: '#770000'      # University maroon
+    secondary: '#CBCCCE'    # University gray
+    background: '#FFFFFF'
+    text: '#000000'
+    success: '#2E7D32'
+    warning: '#F57C00'
+    error: '#C62828'
+
+report_settings:
+  course_length_weeks: 8
+  week_start_day: 'sunday'  # Sunday-Saturday weeks
+  grading_thresholds:
+    assignment_days: 4       # Flag assignments not graded > 4 days
+    essay_exam_days: 7       # Flag essay/exams not graded > 7 days
+    unread_hours: 36         # Flag unread items > 36 hours
+  
+output:
+  default_directory: './reports'
+  timestamp_files: true
+  include_generation_info: true
+  excel_format: true
+  csv_format: false
+
+user_settings:
+  save_preferences: true
+  remember_last_term: true
+  remember_last_filters: true

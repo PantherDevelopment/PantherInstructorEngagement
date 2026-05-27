@@ -1,0 +1,214 @@
+name: Build macOS DMG (Signed & Notarized)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pillow
+          brew install create-dmg
+
+      - name: Import signing certificate
+        env:
+          APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          # Create temporary keychain
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate
+          CERT_PATH=$RUNNER_TEMP/certificate.p12
+          echo "$APPLE_CERTIFICATE_BASE64" | base64 --decode > "$CERT_PATH"
+          security import "$CERT_PATH" -P "$APPLE_CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+
+          # Allow codesign to access keychain
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+          # Find and export the signing identity for later steps
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning "$KEYCHAIN_PATH" | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "SIGNING_IDENTITY=$SIGNING_IDENTITY" >> $GITHUB_ENV
+          echo "Found signing identity: $SIGNING_IDENTITY"
+
+      - name: Generate icns icon
+        run: |
+          mkdir -p assets/icon.iconset
+          python3 - << 'PYEOF'
+          from PIL import Image
+          img = Image.open('assets/icon.png')
+          sizes = [
+              (16,   'icon_16x16.png'),
+              (32,   'icon_16x16@2x.png'),
+              (32,   'icon_32x32.png'),
+              (64,   'icon_32x32@2x.png'),
+              (128,  'icon_128x128.png'),
+              (256,  'icon_128x128@2x.png'),
+              (256,  'icon_256x256.png'),
+              (512,  'icon_256x256@2x.png'),
+              (512,  'icon_512x512.png'),
+              (1024, 'icon_512x512@2x.png'),
+          ]
+          for size, filename in sizes:
+              img.resize((size, size), Image.LANCZOS).save(f'assets/icon.iconset/{filename}')
+          PYEOF
+          iconutil --convert icns assets/icon.iconset --output assets/icon.icns
+
+      - name: Build app bundle
+        run: |
+          VERSION=$(cat VERSION)
+          echo "Building version: $VERSION"
+
+          pyinstaller --noconfirm --onedir --windowed \
+            --name "PantherInstructorEngagement" \
+            --icon "assets/icon.icns" \
+            --add-data "assets:assets" \
+            --add-data "config.yaml:." \
+            --add-data "src:src" \
+            --osx-bundle-identifier "edu.fit.pantherinstructorengagement" \
+            --hidden-import "PyQt6" \
+            --hidden-import "PyQt6.QtCore" \
+            --hidden-import "PyQt6.QtGui" \
+            --hidden-import "PyQt6.QtWidgets" \
+            --hidden-import "keyring" \
+            --hidden-import "keyring.backends" \
+            --hidden-import "keyring.backends.macOS" \
+            --hidden-import "zoneinfo" \
+            --hidden-import "openpyxl" \
+            --hidden-import "yaml" \
+            --hidden-import "PIL" \
+            main.py
+
+          # Update Info.plist with correct version
+          PLIST="dist/PantherInstructorEngagement.app/Contents/Info.plist"
+
+          if /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST" 2>/dev/null; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$PLIST"
+          else
+            /usr/libexec/PlistBuddy -c "Add :CFBundleShortVersionString string $VERSION" "$PLIST"
+          fi
+
+          if /usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$PLIST" 2>/dev/null; then
+            /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$PLIST"
+          else
+            /usr/libexec/PlistBuddy -c "Add :CFBundleVersion string $VERSION" "$PLIST"
+          fi
+
+          echo "Updated Info.plist with version $VERSION"
+
+      - name: Sign app bundle
+        run: |
+          # Sign all dylibs and .so files first
+          find "dist/PantherInstructorEngagement.app" -name "*.dylib" -o -name "*.so" | while read lib; do
+            codesign --force --options runtime --sign "$SIGNING_IDENTITY" "$lib" || true
+          done
+
+          find "dist/PantherInstructorEngagement.app" -name "*.so" -exec \
+            codesign --force --options runtime --sign "$SIGNING_IDENTITY" {} \; || true
+
+          # Sign the main executable
+          codesign --force --options runtime --sign "$SIGNING_IDENTITY" \
+            "dist/PantherInstructorEngagement.app/Contents/MacOS/PantherInstructorEngagement"
+
+          # Create entitlements file
+          cat > entitlements.plist << ENTEOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>com.apple.security.network.client</key>
+              <true/>
+              <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+              <true/>
+              <key>com.apple.security.cs.disable-library-validation</key>
+              <true/>
+          </dict>
+          </plist>
+          ENTEOF
+
+          # Sign the entire app bundle
+          codesign --force --options runtime --sign "$SIGNING_IDENTITY" \
+            --entitlements entitlements.plist --deep "dist/PantherInstructorEngagement.app"
+
+          # Verify signature
+          codesign --verify --verbose "dist/PantherInstructorEngagement.app"
+
+      - name: Create DMG
+        run: |
+          VERSION=$(cat VERSION)
+          create-dmg \
+            --volname "Panther Instructor Engagement" \
+            --volicon "assets/icon.icns" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --icon "PantherInstructorEngagement.app" 150 190 \
+            --hide-extension "PantherInstructorEngagement.app" \
+            --app-drop-link 450 190 \
+            "PantherInstructorEngagement-$VERSION-macOS.dmg" \
+            "dist/PantherInstructorEngagement.app"
+
+      - name: Sign DMG
+        run: |
+          VERSION=$(cat VERSION)
+          codesign --force --sign "$SIGNING_IDENTITY" \
+            "PantherInstructorEngagement-$VERSION-macOS.dmg"
+
+      - name: Notarize DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          VERSION=$(cat VERSION)
+          xcrun notarytool submit "PantherInstructorEngagement-$VERSION-macOS.dmg" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_ID_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+
+          xcrun stapler staple "PantherInstructorEngagement-$VERSION-macOS.dmg"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PantherInstructorEngagement-macOS
+          path: PantherInstructorEngagement-*-macOS.dmg
+
+      - name: Upload to Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: PantherInstructorEngagement-*-macOS.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

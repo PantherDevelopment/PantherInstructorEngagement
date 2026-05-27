@@ -1,0 +1,76 @@
+name: Build Windows
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      # ── 1. Check out code ──────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── 2. Set up Python ───────────────────────────────────────────────────
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # ── 3. Install dependencies ────────────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install tzdata
+          pip install pyinstaller
+
+      # ── 4. Read version ────────────────────────────────────────────────────
+      - name: Read version
+        id: version
+        shell: bash
+        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      # ── 5. Build .exe with PyInstaller ─────────────────────────────────────
+      - name: Build exe
+        run: |
+          $VERSION = Get-Content VERSION
+          pyinstaller --noconfirm --onefile --windowed `
+            --name "PantherInstructorEngagement" `
+            --icon "assets/icon.ico" `
+            --add-data "assets;assets" `
+            --add-data "config.yaml;." `
+            --add-data "src;src" `
+            --hidden-import "PyQt6" `
+            --hidden-import "PyQt6.QtCore" `
+            --hidden-import "PyQt6.QtGui" `
+            --hidden-import "PyQt6.QtWidgets" `
+            --hidden-import "keyring" `
+            --hidden-import "keyring.backends" `
+            --hidden-import "keyring.backends.Windows" `
+            --hidden-import "zoneinfo" `
+            --hidden-import "tzdata" `
+            --hidden-import "openpyxl" `
+            --hidden-import "yaml" `
+            --hidden-import "PIL" `
+            main.py
+
+      # ── 6. Create installer with Inno Setup ────────────────────────────────
+      - name: Create installer
+        run: |
+          choco install innosetup --no-progress -y
+          $VERSION = Get-Content VERSION
+          iscc /DAppVersion=$VERSION installer.iss
+
+      # ── 7. Upload to GitHub Release ────────────────────────────────────────
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Output/PantherInstructorEngagement-${{ steps.version.outputs.VERSION }}-windows-setup.exe
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
