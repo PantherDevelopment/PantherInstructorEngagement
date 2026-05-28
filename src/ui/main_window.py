@@ -33,7 +33,7 @@ class MainWindow(QMainWindow):
         self.admin_accounts = []          # list of {id, name} dicts
 
         self.setWindowTitle("Panther Instructor Engagement Reports")
-        self.setMinimumSize(1000, 900)
+        self.setMinimumSize(800, 600)
         self.resize(1200, 1000)
 
         # Set window icon
@@ -146,9 +146,23 @@ class MainWindow(QMainWindow):
 
     # ── UI Setup ──────────────────────────────────────────────────────────────
     def setup_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        main = QVBoxLayout(central)
+        # Outer widget holds the scroll area
+        outer = QWidget()
+        self.setCentralWidget(outer)
+        outer_layout = QVBoxLayout(outer)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # Scroll area wraps all content
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        outer_layout.addWidget(scroll)
+
+        # Inner widget is what actually gets scrolled
+        inner = QWidget()
+        scroll.setWidget(inner)
+        main = QVBoxLayout(inner)
         main.setContentsMargins(30, 30, 30, 30)
         main.setSpacing(20)
 
