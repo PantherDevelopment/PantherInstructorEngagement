@@ -47,6 +47,7 @@ jobs:
             --icon "assets/icon.ico" `
             --add-data "assets;assets" `
             --add-data "config.yaml;." `
+            --add-data "VERSION;." `
             --add-data "src;src" `
             --hidden-import "PyQt6" `
             --hidden-import "PyQt6.QtCore" `
