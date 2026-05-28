@@ -8,10 +8,10 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QLabel, QMessageBox, QApplication, QDialog, QLineEdit,
     QComboBox, QRadioButton, QButtonGroup, QGroupBox, QListWidget,
-    QFileDialog
+    QFileDialog, QMenuBar, QScrollArea
 )
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QIcon
+from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtGui import QFont, QIcon, QDesktopServices, QAction
 import sys
 import os
 from pathlib import Path
@@ -152,6 +152,9 @@ class MainWindow(QMainWindow):
         main.setContentsMargins(30, 30, 30, 30)
         main.setSpacing(20)
 
+        # Menu bar
+        self.create_menu_bar()
+
         main.addWidget(self.create_header())
         main.addWidget(self.create_filters_section())
         main.addWidget(self.create_week_range_section())
@@ -286,6 +289,188 @@ class MainWindow(QMainWindow):
         layout.addStretch()
         group.setLayout(layout)
         return group
+
+    # ── Menu Bar ──────────────────────────────────────────────────────────────
+    def create_menu_bar(self):
+        menubar = self.menuBar()
+
+        about_menu = menubar.addMenu("About")
+
+        version_action = QAction("About Panther Instructor Engagement", self)
+        version_action.triggered.connect(self.show_about)
+        about_menu.addAction(version_action)
+
+        guide_action = QAction("User Guide", self)
+        guide_action.triggered.connect(self.show_user_guide)
+        about_menu.addAction(guide_action)
+
+        about_menu.addSeparator()
+
+        update_action = QAction("Check for Updates", self)
+        update_action.triggered.connect(self.check_for_updates_manual)
+        about_menu.addAction(update_action)
+
+    def show_about(self):
+        """Show about dialog with version number"""
+        from src.utils.version_check import get_current_version
+        version = get_current_version()
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("About Panther Instructor Engagement")
+        msg.setIconPixmap(self.windowIcon().pixmap(64, 64))
+        msg.setText(
+            f"<b>Panther Instructor Engagement Reports</b><br><br>"
+            f"Version {version}<br><br>"
+            f"A Canvas LMS tool for monitoring instructor activity<br>"
+            f"across online courses.<br><br>"
+            f"Developed by Darby Proctor, Ph.D.<br>"
+            f"Florida Institute of Technology"
+        )
+        msg.exec()
+
+    def check_for_updates_manual(self):
+        """Manually triggered update check from menu"""
+        from src.utils.version_check import check_for_updates, get_current_version
+        update = check_for_updates()
+
+        if update:
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Update Available")
+            msg.setIcon(QMessageBox.Icon.Information)
+            msg.setText(
+                f"A new version is available!\n\n"
+                f"Current version:  {update['current']}\n"
+                f"Latest version:   {update['latest']}\n\n"
+                f"Click Download to get the latest version."
+            )
+            download_btn = msg.addButton("Download", QMessageBox.ButtonRole.AcceptRole)
+            msg.addButton("Close", QMessageBox.ButtonRole.RejectRole)
+            msg.exec()
+            if msg.clickedButton() == download_btn:
+                QDesktopServices.openUrl(QUrl(update['url']))
+        else:
+            QMessageBox.information(
+                self,
+                "No Updates Available",
+                f"You are running the latest version ({get_current_version()})."
+            )
+
+    def show_user_guide(self):
+        """Show scrollable user guide dialog"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("User Guide")
+        dialog.setMinimumSize(700, 600)
+
+        layout = QVBoxLayout(dialog)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+
+        guide_text = QLabel(self._get_user_guide_text())
+        guide_text.setWordWrap(True)
+        guide_text.setTextFormat(Qt.TextFormat.RichText)
+        guide_text.setFont(QFont("Arial", 12))
+        guide_text.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        content_layout.addWidget(guide_text)
+        scroll.setWidget(content)
+        layout.addWidget(scroll)
+
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+
+        dialog.exec()
+
+    def _get_user_guide_text(self) -> str:
+        return """
+<h2 style='color:#770000;'>Panther Instructor Engagement Reports — User Guide</h2>
+
+<h3 style='color:#770000;'>Overview</h3>
+<p>This application connects to your Canvas LMS account and generates Excel reports
+showing instructor engagement activity for online courses. Reports can be generated
+for the current week or the entire term to date.</p>
+
+<h3 style='color:#770000;'>First-Time Setup</h3>
+<p>On first launch you will be prompted for:</p>
+<ul>
+<li><b>Canvas URL</b> — your institution's Canvas address (e.g. https://fit.instructure.com)</li>
+<li><b>API Token</b> — generated in Canvas under Account → Settings → New Access Token</li>
+</ul>
+<p>Your credentials are stored securely in your system keychain and will not need
+to be entered again.</p>
+
+<h3 style='color:#770000;'>Searching for Courses</h3>
+<p>Use the <b>Filters</b> section to find courses. At least one filter must be filled
+before clicking Search.</p>
+<ul>
+<li><b>Account</b> — filter to a specific admin account or search all accounts</li>
+<li><b>Course Code</b> — type part of a course code (e.g. PSY, PSY1411)</li>
+<li><b>Instructor</b> — type part of an instructor's last name</li>
+<li><b>Year</b> — select the academic year</li>
+<li><b>Semester</b> — select Fall, Spring, or Summer</li>
+<li><b>Term</b> — select 8-Week Term 1 or 8-Week Term 2 for online courses</li>
+</ul>
+<p>Click <b>🔍 Search</b> to run the search. Results appear in the course list below the filters.
+Searches may take a moment depending on the number of courses in your accounts.</p>
+
+<h3 style='color:#770000;'>Selecting Courses</h3>
+<p>Click a course in the list to select it. Click again to deselect.
+Multiple courses can be selected at the same time — hold nothing special,
+just click each course you want to include.</p>
+<p>Courses are sorted alphabetically by course prefix and then numerically by course number.</p>
+
+<h3 style='color:#770000;'>Report Period</h3>
+<p>Choose the time period for the report:</p>
+<ul>
+<li><b>Current Week</b> — activity from the current Monday–Sunday week of the term</li>
+<li><b>Entire Term (All Weeks to Date)</b> — cumulative activity since the term started</li>
+</ul>
+<p>If a course's term has already ended and you select Current Week, the report will
+automatically use Entire Term for that course and note this in the success message.</p>
+
+<h3 style='color:#770000;'>Generating the Report</h3>
+<p>After selecting courses and a report period, click <b>Generate Engagement Report</b>.
+You will be prompted to choose where to save the Excel file. The app remembers
+your last save location.</p>
+<p>Data collection may take a minute or two depending on how many courses are selected
+and how many discussion topics each course has.</p>
+
+<h3 style='color:#770000;'>Report Columns</h3>
+<p><b>Current Week Report:</b></p>
+<ul>
+<li><b>Course Code / Course Name / Instructor</b> — course identification</li>
+<li><b>Total Activity Time (Term)</b> — total time the instructor has been active in Canvas for this course since the term started</li>
+<li><b>Last Login Date (ET)</b> — the last time the instructor was active in this course, shown in Eastern Time</li>
+<li><b>Discussion Replies (This Week)</b> — number of discussion replies posted by the instructor this week</li>
+<li><b>Discussion Replies (Term Total)</b> — total discussion replies posted by the instructor since the term started</li>
+<li><b>Discussion Posts Not Graded >7 Days</b> — discussion board assignments submitted by students more than 7 days ago that have not been graded</li>
+<li><b>Other Assignments Not Graded >7 Days</b> — non-discussion assignments submitted more than 7 days ago that have not been graded</li>
+<li><b>Announcements (This Week)</b> — number of announcements posted by the instructor this week</li>
+<li><b>Instructor Bio Complete</b> — Y or N indicating whether the instructor has completed their Canvas profile bio</li>
+</ul>
+<p><b>Entire Term Report</b> contains the same columns except it omits the weekly
+discussion replies column and shows term totals only.</p>
+
+<h3 style='color:#770000;'>Tips</h3>
+<ul>
+<li>Use the Term filter (8-Week Term 1 / 8-Week Term 2) to separate online sections
+that run within the same semester</li>
+<li>You can select courses from different terms in the same report run</li>
+<li>The report file is named with a timestamp so each run creates a new file</li>
+</ul>
+
+<h3 style='color:#770000;'>Updates</h3>
+<p>The application checks for updates automatically when it launches. You can also
+check manually at any time using <b>About → Check for Updates</b>. When an update
+is available you will be given a direct link to download the latest version.</p>
+
+<p style='color:#888; margin-top:30px;'><i>Developed by Darby Proctor, Ph.D. — Florida Institute of Technology</i></p>
+"""
 
     # ── Update check ─────────────────────────────────────────────────────────
     def check_for_updates(self):
