@@ -2,6 +2,8 @@
 Version checker - checks GitHub releases for newer versions on startup
 """
 
+import sys
+import os
 import requests
 from pathlib import Path
 
@@ -11,10 +13,25 @@ RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 
 def get_current_version() -> str:
-    """Read current version from VERSION file"""
+    """Read current version from VERSION file - works both in dev and bundled app"""
     try:
-        version_file = Path(__file__).parent.parent.parent / 'VERSION'
-        return version_file.read_text().strip()
+        if hasattr(sys, '_MEIPASS'):
+            # PyInstaller bundled - VERSION is in _MEIPASS
+            version_file = Path(sys._MEIPASS) / 'VERSION'
+        else:
+            # Development - VERSION is at project root
+            version_file = Path(__file__).parent.parent.parent / 'VERSION'
+
+        if version_file.exists():
+            return version_file.read_text().strip()
+
+        # Last resort - check next to the executable
+        exe_dir = Path(sys.executable).parent
+        version_file = exe_dir / 'VERSION'
+        if version_file.exists():
+            return version_file.read_text().strip()
+
+        return "0.0.0"
     except Exception:
         return "0.0.0"
 
