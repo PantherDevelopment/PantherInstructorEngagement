@@ -89,6 +89,9 @@ jobs:
           VERSION=$(cat VERSION)
           echo "Building version: $VERSION"
 
+          # Embed version into Python so it's always available in the bundle
+          echo "__version__ = \"$VERSION\"" > src/utils/_version.py
+
           pyinstaller --noconfirm --onedir --windowed \
             --name "PantherInstructorEngagement" \
             --icon "assets/icon.icns" \

@@ -32,11 +32,18 @@ jobs:
           pip install tzdata
           pip install pyinstaller
 
-      # ── 4. Read version ────────────────────────────────────────────────────
+      # ── 4. Read version and embed it ───────────────────────────────────────
       - name: Read version
         id: version
         shell: bash
         run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
+
+      - name: Embed version into Python
+        shell: bash
+        run: |
+          VERSION=$(cat VERSION)
+          echo "__version__ = \"$VERSION\"" > src/utils/_version.py
+          echo "Embedded version: $VERSION"
 
       # ── 5. Build .exe with PyInstaller ─────────────────────────────────────
       - name: Build exe

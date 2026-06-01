@@ -30,12 +30,7 @@ Thumbs.db
 ehthumbs.db
 Desktop.ini
 
-<<<<<<< HEAD
 # PyInstaller build outputs (but keep spec files)
-=======
-# PyInstaller
-*.spec
->>>>>>> 4a655651d8f9d045e8a3bfeb76bf2a3a1713f173
 dist/
 build/
 
@@ -55,8 +50,7 @@ build/
 Output/
 *.iconset/
 assets/icon.icns
-<<<<<<< HEAD
 assets/icon_512.png
-=======
-assets/icon_512.png
->>>>>>> 4a655651d8f9d045e8a3bfeb76bf2a3a1713f173
+-e 
+# Generated at build time - do not commit
+src/utils/_version.py
