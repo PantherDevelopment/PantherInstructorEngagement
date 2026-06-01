@@ -51,6 +51,3 @@ Output/
 *.iconset/
 assets/icon.icns
 assets/icon_512.png
--e 
-# Generated at build time - do not commit
-src/utils/_version.py
