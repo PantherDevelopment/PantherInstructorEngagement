@@ -83,48 +83,4 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: Output/PantherInstructorEngagement-${{ steps.version.outputs.VERSION }}-windows-setup.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}        id: version
-        shell: bash
-        run: echo "VERSION=$(cat VERSION)" >> $GITHUB_OUTPUT
-
-      # ── 5. Build .exe with PyInstaller ─────────────────────────────────────
-      - name: Build exe
-        run: |
-          $VERSION = Get-Content VERSION
-          pyinstaller --noconfirm --onefile --windowed `
-            --name "PantherInstructorEngagement" `
-            --icon "assets/icon.ico" `
-            --add-data "assets;assets" `
-            --add-data "config.yaml;." `
-            --add-data "VERSION;." `
-            --add-data "src;src" `
-            --hidden-import "PyQt6" `
-            --hidden-import "PyQt6.QtCore" `
-            --hidden-import "PyQt6.QtGui" `
-            --hidden-import "PyQt6.QtWidgets" `
-            --hidden-import "keyring" `
-            --hidden-import "keyring.backends" `
-            --hidden-import "keyring.backends.Windows" `
-            --hidden-import "zoneinfo" `
-            --hidden-import "tzdata" `
-            --hidden-import "openpyxl" `
-            --hidden-import "yaml" `
-            --hidden-import "PIL" `
-            main.py
-
-      # ── 6. Create installer with Inno Setup ────────────────────────────────
-      - name: Create installer
-        run: |
-          choco install innosetup --no-progress -y
-          $VERSION = Get-Content VERSION
-          iscc /DAppVersion=$VERSION installer.iss
-
-      # ── 7. Upload to GitHub Release ────────────────────────────────────────
-      - name: Upload to Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
-        with:
-          files: Output/PantherInstructorEngagement-${{ steps.version.outputs.VERSION }}-windows-setup.exe
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
