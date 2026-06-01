@@ -180,6 +180,25 @@ class MainWindow(QMainWindow):
         self.generate_btn.clicked.connect(self.generate_report)
         main.addWidget(self.generate_btn)
 
+        # Progress bar (hidden until report generation starts)
+        from PyQt6.QtWidgets import QProgressBar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setMinimumHeight(24)
+        self.progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: 2px solid {self.config.secondary_color};
+                border-radius: 4px;
+                text-align: center;
+                font-size: 13px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {self.config.primary_color};
+                border-radius: 2px;
+            }}
+        """)
+        main.addWidget(self.progress_bar)
+
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main.addWidget(self.status_label)
@@ -270,16 +289,25 @@ class MainWindow(QMainWindow):
         row2.addWidget(self.search_btn)
         layout.addLayout(row2)
 
-        # ── Course list label ─────────────────────────────────────────────────
+        # ── Course list label + select all button ─────────────────────────────
+        list_header = QHBoxLayout()
         self.course_list_label = QLabel("Click a course to select it for the report. Click again to deselect. Multiple courses can be selected.")
         self.course_list_label.setWordWrap(True)
         self.course_list_label.setStyleSheet("color: #770000; font-size: 14px; font-style: italic; padding: 4px 0;")
-        layout.addWidget(self.course_list_label)
+        list_header.addWidget(self.course_list_label)
+
+        self.select_all_btn = QPushButton("Select All")
+        self.select_all_btn.setFixedWidth(160)
+        self.select_all_btn.setEnabled(False)
+        self.select_all_btn.clicked.connect(self.toggle_select_all)
+        list_header.addWidget(self.select_all_btn)
+        layout.addLayout(list_header)
 
         # ── Course list ───────────────────────────────────────────────────────
         self.course_list = QListWidget()
         self.course_list.setMinimumHeight(250)
         self.course_list.setSelectionMode(QListWidget.SelectionMode.MultiSelection)
+        self.course_list.itemSelectionChanged.connect(self.update_select_all_btn)
         layout.addWidget(self.course_list)
 
         group.setLayout(layout)
@@ -518,6 +546,20 @@ is available you will be given a direct link to download the latest version.</p>
         except Exception:
             pass  # Never crash the app over an update check
 
+    def toggle_select_all(self):
+        """Select all or deselect all courses in the list"""
+        if self.course_list.selectedItems():
+            self.course_list.clearSelection()
+        else:
+            self.course_list.selectAll()
+
+    def update_select_all_btn(self):
+        """Update Select All button label based on current selection"""
+        if self.course_list.selectedItems():
+            self.select_all_btn.setText("Deselect All")
+        else:
+            self.select_all_btn.setText("Select All")
+
     # ── Account loading ───────────────────────────────────────────────────────
     def load_admin_accounts(self):
         """Load admin accounts and populate dropdown after UI is ready"""
@@ -666,8 +708,10 @@ is available you will be given a direct link to download the latest version.</p>
             if count == 0:
                 QMessageBox.information(self, "No Matches", "No courses matched your filters.")
                 self.generate_btn.setEnabled(False)
+                self.select_all_btn.setEnabled(False)
             else:
                 self.generate_btn.setEnabled(True)
+                self.select_all_btn.setEnabled(True)
 
         except Exception as e:
             QApplication.restoreOverrideCursor()
@@ -690,10 +734,9 @@ is available you will be given a direct link to download the latest version.</p>
         selected_courses = [self.filtered_courses[i] for i in selected_indices]
 
         # ── Ask where to save ─────────────────────────────────────────────────
-        timestamp     = datetime.now().strftime('%Y%m%d_%H%M%S')
-        default_name  = f'Instructor_Engagement_Report_{timestamp}.xlsx'
+        timestamp    = datetime.now().strftime('%Y%m%d_%H%M%S')
+        default_name = f'Instructor_Engagement_Report_{timestamp}.xlsx'
 
-        # Recall last save folder from keyring
         try:
             last_folder = keyring.get_password("PantherInstructorEngagement", "last_save_folder")
         except:
@@ -708,9 +751,8 @@ is available you will be given a direct link to download the latest version.</p>
         )
 
         if not save_path:
-            return          # user cancelled
+            return
 
-        # Remember the folder for next time
         try:
             keyring.set_password(
                 "PantherInstructorEngagement",
@@ -721,115 +763,160 @@ is available you will be given a direct link to download the latest version.</p>
             pass
 
         # ── Week range ────────────────────────────────────────────────────────
-        if self.current_week_radio.isChecked():
-            week_type = 'current_week'
-        else:
-            week_type = 'entire_term'
+        week_type = 'current_week' if self.current_week_radio.isChecked() else 'entire_term'
 
-        # ── Collect data ──────────────────────────────────────────────────────
-        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
-        self.status_label.setText("Collecting engagement data from Canvas...")
+        # ── Resolve date ranges per course ────────────────────────────────────
+        from src.utils.week_utils import get_current_week_range, get_entire_term_range
+
+        courses_with_dates = []
+        fallback_courses   = []
+
+        for course in selected_courses:
+            term_start = course.get('term', {}).get('start_at')
+            if not term_start:
+                continue
+
+            term_start_date  = datetime.fromisoformat(term_start.replace('Z', '+00:00')).replace(tzinfo=None)
+            effective_period = week_type
+
+            if week_type == 'current_week':
+                try:
+                    period_start, period_end = get_current_week_range(term_start_date)
+                except ValueError:
+                    effective_period = 'entire_term'
+                    period_start, period_end = get_entire_term_range(term_start_date)
+                    fallback_courses.append(course.get('course_code', ''))
+            else:
+                period_start, period_end = get_entire_term_range(term_start_date)
+
+            courses_with_dates.append((course, period_start, period_end, effective_period))
+
+        if not courses_with_dates:
+            QMessageBox.warning(self, "No Data", "No courses had valid term dates.")
+            return
+
+        # ── Set up UI for progress ────────────────────────────────────────────
+        total = len(courses_with_dates)
+        self.generate_btn.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat(f"Collecting data: 0 of {total} courses")
+        self.status_label.setText("Starting data collection...")
+        QApplication.processEvents()
+
+        # ── Thread-safe result storage ────────────────────────────────────────
+        self._report_results   = []
+        self._report_errors    = []
+        self._report_completed = [0]
+        self._report_total     = total
+        self._report_save_path = save_path
+        self._report_week_type = week_type
+        self._report_fallbacks = fallback_courses
+
+        # ── Launch workers ────────────────────────────────────────────────────
+        from PyQt6.QtCore import QThreadPool
+        from src.utils.course_worker import CourseWorker
+
+        pool = QThreadPool.globalInstance()
+        pool.setMaxThreadCount(4)
+
+        for course, period_start, period_end, effective_period in courses_with_dates:
+            worker = CourseWorker(
+                api_client    = self.api_client,
+                course        = course,
+                period_start  = period_start,
+                period_end    = period_end,
+                period        = effective_period,
+                completed_ref = self._report_completed,
+                total         = total
+            )
+            worker.signals.finished.connect(self._on_course_complete)
+            worker.signals.error.connect(self._on_course_error)
+            worker.signals.progress.connect(self._on_progress_update)
+            pool.start(worker)
+
+    def _on_progress_update(self, completed: int, total: int):
+        """Update progress bar as each course finishes"""
+        self.progress_bar.setValue(completed)
+        self.progress_bar.setFormat(f"Collecting data: {completed} of {total} courses")
+        self.status_label.setText(f"Collecting data: {completed} of {total} courses complete...")
+        if completed >= total:
+            self._finalize_report()
+
+    def _on_course_complete(self, data: dict):
+        """Called when a course worker finishes successfully"""
+        self._report_results.append(data)
+
+    def _on_course_error(self, error_msg: str):
+        """Called when a course worker fails"""
+        self._report_errors.append(error_msg)
+
+    def _finalize_report(self):
+        """Generate Excel file once all workers are done"""
+        from src.utils.excel_generator import ExcelReportGenerator
+
+        save_path = self._report_save_path
+        week_type = self._report_week_type
+        all_data  = self._report_results
+        fallbacks = self._report_fallbacks
+        errors    = self._report_errors
+
+        self.generate_btn.setEnabled(True)
+        self.progress_bar.setVisible(False)
+
+        if not all_data:
+            QMessageBox.warning(self, "No Data", "No engagement data could be collected.")
+            self.status_label.setText("⚠ No data collected")
+            return
+
+        excel_period = week_type
+        if fallbacks and len(fallbacks) == len(all_data):
+            excel_period = 'entire_term'
+
+        self.status_label.setText("Generating Excel report...")
         QApplication.processEvents()
 
         try:
-            from src.utils.engagement_collector import EngagementCollector
-            from src.utils.week_utils import get_current_week_range, get_entire_term_range
+            import re
+            def sort_key(d):
+                code = d.get('course_code', '')
+                m = re.match(r'^([A-Za-z]*)(\d*)', code)
+                if m:
+                    return (m.group(1).upper(), int(m.group(2)) if m.group(2) else 0)
+                return ('', 0)
 
-            collector = EngagementCollector(self.api_client)
-            all_data  = []
+            all_data.sort(key=sort_key)
 
-            for course in selected_courses:
-                course_id   = course.get('id')
-                course_name = course.get('name')
-                course_code = course.get('course_code')
+            generator = ExcelReportGenerator()
+            generator.generate_report(all_data, save_path, excel_period)
 
-                term       = course.get('term', {})
-                term_start = term.get('start_at')
-
-                if not term_start:
-                    continue
-
-                term_start_date = datetime.fromisoformat(term_start.replace('Z', '+00:00')).replace(tzinfo=None)
-
-                # Determine period - fall back to entire_term if term has ended
-                effective_period = week_type
-                if week_type == 'current_week':
-                    try:
-                        week_start, week_end = get_current_week_range(term_start_date)
-                    except ValueError as e:
-                        # Term has ended or not started - fall back to entire term
-                        effective_period = 'entire_term'
-                        week_start, week_end = get_entire_term_range(term_start_date)
-                        fallback_courses = getattr(self, '_fallback_courses', [])
-                        fallback_courses.append(course_code)
-                        self._fallback_courses = fallback_courses
-                else:
-                    week_start, week_end = get_entire_term_range(term_start_date)
-
-                teachers = course.get('teachers', [])
-                if not teachers:
-                    continue
-
-                instructor      = teachers[0]
-                instructor_id   = instructor.get('id')
-                instructor_name = instructor.get('display_name')
-
-                self.status_label.setText(f"Collecting data for {course_code} – {instructor_name}...")
-                QApplication.processEvents()
-
-                data = collector.collect_instructor_data(
-                    str(course_id), str(instructor_id), week_start, week_end, effective_period
+            fallback_note = ''
+            if fallbacks:
+                fallback_note = (
+                    f"\n\n⚠ Note: {len(fallbacks)} course(s) used Entire Term instead of Current Week:\n"
+                    + '\n'.join(f"  • {c}" for c in fallbacks)
                 )
-                data['course_code']      = course_code
-                data['course_name']      = course_name
-                data['instructor_name']  = instructor_name
-                all_data.append(data)
 
-            QApplication.restoreOverrideCursor()
-
-            if all_data:
-                from src.utils.excel_generator import ExcelReportGenerator
-                self.status_label.setText("Generating Excel report...")
-                QApplication.processEvents()
-
-                # Use the user's chosen period for the Excel structure.
-                # If ALL courses fell back, use entire_term structure.
-                fallback_courses = getattr(self, '_fallback_courses', [])
-                excel_period = week_type
-                if fallback_courses and len(fallback_courses) == len(all_data):
-                    excel_period = 'entire_term'
-                self._fallback_courses = []  # reset for next run
-
-                generator = ExcelReportGenerator()
-                generator.generate_report(all_data, save_path, excel_period)
-
-                # Build notice about any fallbacks
-                fallback_note = ''
-                if fallback_courses:
-                    fallback_note = (
-                        f"\n\n⚠ Note: {len(fallback_courses)} course(s) had concluded terms "
-                        f"and were reported using Entire Term instead of Current Week:\n"
-                        + '\n'.join(f"  • {c}" for c in fallback_courses)
-                    )
-
-                QMessageBox.information(
-                    self, "Report Generated",
-                    f"Report saved successfully!\n\n"
-                    f"Courses: {len(all_data)}\n"
-                    f"File: {Path(save_path).name}\n"
-                    f"Location: {Path(save_path).parent}"
-                    + fallback_note
+            error_note = ''
+            if errors:
+                error_note = (
+                    f"\n\n⚠ {len(errors)} course(s) failed to collect:\n"
+                    + '\n'.join(f"  • {e}" for e in errors)
                 )
-                self.status_label.setText(f"✓ Report saved: {Path(save_path).name}")
-            else:
-                QMessageBox.warning(self, "No Data", "No engagement data could be collected.")
-                self.status_label.setText("⚠ No data collected")
+
+            QMessageBox.information(
+                self, "Report Generated",
+                f"Report saved successfully!\n\n"
+                f"Courses: {len(all_data)}\n"
+                f"File: {Path(save_path).name}\n"
+                f"Location: {Path(save_path).parent}"
+                + fallback_note + error_note
+            )
+            self.status_label.setText(f"✓ Report saved: {Path(save_path).name}")
 
         except Exception as e:
-            QApplication.restoreOverrideCursor()
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Error collecting data:\n\n{e}")
+            QMessageBox.critical(self, "Error", f"Error generating Excel file:\n\n{e}")
             self.status_label.setText(f"✗ Error: {e}")
 
     # ── Styles ────────────────────────────────────────────────────────────────

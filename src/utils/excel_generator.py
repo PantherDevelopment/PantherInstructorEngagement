@@ -29,6 +29,7 @@ class ExcelReportGenerator:
         ('Other Assignments Not Graded >7 Days',      28, 'other_not_graded_7days'),
         ('Announcements (This Week)',                  22, 'announcements_count'),
         ('Instructor Bio Complete',                    22, 'instructor_bio_complete'),
+        ('Data Collection Notes',                      35, 'collection_notes'),
     ]
 
     TERM_COLUMNS = [
@@ -42,6 +43,7 @@ class ExcelReportGenerator:
         ('Other Assignments Not Graded >7 Days',      28, 'other_not_graded_7days'),
         ('Announcements (Term Total)',                 22, 'announcements_count'),
         ('Instructor Bio Complete',                    22, 'instructor_bio_complete'),
+        ('Data Collection Notes',                      35, 'collection_notes'),
     ]
 
     # Keys that should be center-aligned
@@ -90,11 +92,20 @@ class ExcelReportGenerator:
 
             for col_idx, (_header, _width, key) in enumerate(columns, 1):
                 cell        = ws.cell(row=row_num, column=col_idx)
-                cell.value  = record.get(key, '')
+                value       = record.get(key, '')
+                cell.value  = value
                 cell.fill   = row_fill
                 cell.border = border
                 if key in self.CENTER_KEYS:
                     cell.alignment = center
+                # Style N/A cells in italic gray
+                if value == 'N/A':
+                    cell.font      = Font(italic=True, color="999999", size=10)
+                    cell.alignment = center
+                # Highlight notes cell red if there were errors
+                elif key == 'collection_notes' and record.get(key, 'OK') != 'OK':
+                    cell.fill = PatternFill(start_color="FFCCCC", end_color="FFCCCC", fill_type="solid")
+                    cell.font = Font(color="CC0000", size=10)
 
         ws.freeze_panes = 'A2'
         wb.save(output_path)

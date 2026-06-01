@@ -63,22 +63,15 @@ class CanvasAPIClient:
         except Exception as e:
             raise CanvasAPIError(f"Failed to save token: {e}")
     
-    def _make_request(self, method: str, endpoint: str, params: Optional[Dict] = None, 
-                     data: Optional[Dict] = None) -> Any:
+    def _make_request(self, method: str, endpoint: str, params: Optional[Dict] = None,
+                     data: Optional[Dict] = None, _retry: int = 0) -> Any:
         """
-        Make a request to Canvas API with error handling and rate limiting
-        
-        Args:
-            method: HTTP method (GET, POST, etc.)
-            endpoint: API endpoint (e.g., "/api/v1/courses")
-            params: Query parameters
-            data: Request body data
-            
-        Returns:
-            Response data (JSON)
+        Make a request to Canvas API with error handling, rate limiting,
+        and exponential backoff retry (up to 4 attempts).
         """
+        MAX_RETRIES = 4
         url = f"{self.base_url}{endpoint}"
-        
+
         try:
             response = self.session.request(
                 method=method,
@@ -87,16 +80,23 @@ class CanvasAPIClient:
                 json=data,
                 timeout=self.timeout
             )
-            
-            # Check for rate limiting
+
+            # Rate limit - wait and retry
             if response.status_code == 429:
-                retry_after = int(response.headers.get('Retry-After', 60))
-                time.sleep(retry_after)
-                return self._make_request(method, endpoint, params, data)
-            
+                if _retry < MAX_RETRIES:
+                    wait = int(response.headers.get('Retry-After', 0)) or (2 ** _retry)
+                    time.sleep(wait)
+                    return self._make_request(method, endpoint, params, data, _retry + 1)
+                raise CanvasAPIError("Rate limit exceeded after maximum retries")
+
+            # Server errors (5xx) - retry with backoff
+            if response.status_code >= 500 and _retry < MAX_RETRIES:
+                time.sleep(2 ** _retry)
+                return self._make_request(method, endpoint, params, data, _retry + 1)
+
             response.raise_for_status()
             return response.json()
-            
+
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 401:
                 raise CanvasAPIError("Invalid API token or expired session")
@@ -107,9 +107,17 @@ class CanvasAPIClient:
             else:
                 raise CanvasAPIError(f"HTTP Error: {e}")
         except requests.exceptions.Timeout:
-            raise CanvasAPIError("Request timed out")
+            if _retry < MAX_RETRIES:
+                time.sleep(2 ** _retry)
+                return self._make_request(method, endpoint, params, data, _retry + 1)
+            raise CanvasAPIError("Request timed out after maximum retries")
         except requests.exceptions.ConnectionError:
+            if _retry < MAX_RETRIES:
+                time.sleep(2 ** _retry)
+                return self._make_request(method, endpoint, params, data, _retry + 1)
             raise CanvasAPIError("Connection error - check your internet connection")
+        except CanvasAPIError:
+            raise
         except Exception as e:
             raise CanvasAPIError(f"Unexpected error: {e}")
     
