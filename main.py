@@ -10,6 +10,14 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.ui.main_window import main
+import sys
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        pass
+    finally:
+        from PyQt6.QtCore import QThreadPool
+        QThreadPool.globalInstance().waitForDone(3000)  # wait max 3s for threads
+        sys.exit(0)

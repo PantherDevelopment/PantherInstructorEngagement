@@ -13,27 +13,38 @@ RELEASES_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 
 def get_current_version() -> str:
-    """Read current version from VERSION file - works both in dev and bundled app"""
+    """
+    Read current version. Priority:
+    1. Embedded _version.py (created at build time by GitHub Actions - most reliable)
+    2. VERSION file in _MEIPASS (PyInstaller bundle)
+    3. VERSION file at project root (development)
+    """
+    try:
+        # Try embedded version first (always works in built app)
+        from src.utils._version import __version__
+        return __version__
+    except ImportError:
+        pass
+
     try:
         if hasattr(sys, '_MEIPASS'):
-            # PyInstaller bundled - VERSION is in _MEIPASS
             version_file = Path(sys._MEIPASS) / 'VERSION'
         else:
-            # Development - VERSION is at project root
             version_file = Path(__file__).parent.parent.parent / 'VERSION'
 
         if version_file.exists():
             return version_file.read_text().strip()
 
-        # Last resort - check next to the executable
+        # Last resort - check next to executable
         exe_dir = Path(sys.executable).parent
         version_file = exe_dir / 'VERSION'
         if version_file.exists():
             return version_file.read_text().strip()
 
-        return "0.0.0"
     except Exception:
-        return "0.0.0"
+        pass
+
+    return "0.0.0"
 
 
 def get_latest_release() -> dict:
