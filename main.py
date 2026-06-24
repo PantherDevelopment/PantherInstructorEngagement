@@ -18,11 +18,6 @@ if __name__ == "__main__":
     except SystemExit:
         pass
     finally:
-        try:
-            from PyQt6.QtCore import QThreadPool
-            pool = QThreadPool.globalInstance()
-            if pool is not None:
-                pool.waitForDone(3000)
-        except Exception:
-            pass
+        from PyQt6.QtCore import QThreadPool
+        QThreadPool.globalInstance().waitForDone(3000)  # wait max 3s for threads
         sys.exit(0)

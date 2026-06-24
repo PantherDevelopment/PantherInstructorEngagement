@@ -817,13 +817,18 @@ is available you will be given a direct link to download the latest version.</p>
         # ── Launch workers ────────────────────────────────────────────────────
         from PyQt6.QtCore import QThreadPool
         from src.utils.course_worker import CourseWorker
+        from src.utils.engagement_collector import EngagementCollector
+
+        # Create collector once and share across all workers
+        # (avoids import issues inside threads)
+        collector = EngagementCollector(self.api_client)
 
         pool = QThreadPool.globalInstance()
         pool.setMaxThreadCount(4)
 
         for course, period_start, period_end, effective_period in courses_with_dates:
             worker = CourseWorker(
-                api_client    = self.api_client,
+                collector     = collector,
                 course        = course,
                 period_start  = period_start,
                 period_end    = period_end,
@@ -841,16 +846,23 @@ is available you will be given a direct link to download the latest version.</p>
         self.progress_bar.setValue(completed)
         self.progress_bar.setFormat(f"Collecting data: {completed} of {total} courses")
         self.status_label.setText(f"Collecting data: {completed} of {total} courses complete...")
-        if completed >= total:
-            self._finalize_report()
+        # Don't finalize here - wait for _check_complete after data is appended
 
     def _on_course_complete(self, data: dict):
         """Called when a course worker finishes successfully"""
         self._report_results.append(data)
+        self._check_complete()
 
     def _on_course_error(self, error_msg: str):
         """Called when a course worker fails"""
         self._report_errors.append(error_msg)
+        self._check_complete()
+
+    def _check_complete(self):
+        """Finalize only when all workers have reported back"""
+        total_received = len(self._report_results) + len(self._report_errors)
+        if total_received >= self._report_total:
+            self._finalize_report()
 
     def _finalize_report(self):
         """Generate Excel file once all workers are done"""
