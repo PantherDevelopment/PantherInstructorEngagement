@@ -2,7 +2,6 @@
 Panther Instructor Engagement Reports
 Main entry point for the application
 """
-
 import sys
 from pathlib import Path
 
@@ -10,7 +9,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.ui.main_window import main
-import sys
 
 if __name__ == "__main__":
     try:
@@ -18,6 +16,11 @@ if __name__ == "__main__":
     except SystemExit:
         pass
     finally:
-        from PyQt6.QtCore import QThreadPool
-        QThreadPool.globalInstance().waitForDone(3000)  # wait max 3s for threads
+        try:
+            from PyQt6.QtCore import QThreadPool
+            pool = QThreadPool.globalInstance()
+            if pool is not None:
+                pool.waitForDone(3000)
+        except Exception:
+            pass
         sys.exit(0)

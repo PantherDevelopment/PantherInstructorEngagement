@@ -249,7 +249,7 @@ class EngagementCollector:
         disc_7days  = 0
         other_4days = 0
         other_7days = 0
-        now_utc     = datetime.now(timezone.utc)
+        now_utc = datetime.utcnow()  # naive UTC - consistent across all platforms
 
         try:
             assignments = self.api._make_paginated_request(
@@ -279,7 +279,7 @@ class EngagementCollector:
                         try:
                             submitted_dt = datetime.fromisoformat(
                                 sub['submitted_at'].replace('Z', '+00:00')
-                            )
+                            ).replace(tzinfo=None)  # strip timezone - naive UTC
                             days_old = (now_utc - submitted_dt).days
 
                             if is_disc:
