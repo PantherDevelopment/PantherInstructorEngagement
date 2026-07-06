@@ -245,11 +245,9 @@ class EngagementCollector:
     # BATCH 4: Submissions - per-assignment approach, UTC timezone safe
     # -----------------------------------------------------------------------
     def batch4_submissions(self, course_id: str) -> Dict:
-        disc_4days  = 0
         disc_7days  = 0
-        other_4days = 0
         other_7days = 0
-        now_utc = datetime.utcnow()  # naive UTC - consistent across all platforms
+        now_utc     = datetime.utcnow()
 
         try:
             assignments = self.api._make_paginated_request(
@@ -266,52 +264,48 @@ class EngagementCollector:
                 a_name  = assignment.get('name', '')
                 is_disc = 'discussion' in a_name.lower()
 
+                # Use due date - only count if due more than 7 days ago
+                due_at = assignment.get('due_at')
+                if not due_at:
+                    continue  # skip assignments with no due date
+
+                due_dt   = datetime.fromisoformat(due_at.replace('Z', '+00:00')).replace(tzinfo=None)
+                days_due = (now_utc - due_dt).days
+
+                if days_due <= 7:
+                    continue  # due date not yet 7 days past
+
+                # Count all ungraded submissions for this assignment
                 try:
                     subs = self.api._make_paginated_request(
                         'GET',
                         f'/api/v1/courses/{course_id}/assignments/{a_id}/submissions',
-                        {'per_page': 100, 'workflow_state': 'submitted'}
+                        {'per_page': 100}
                     )
 
                     for sub in subs:
-                        if sub.get('graded_at') or not sub.get('submitted_at'):
+                        if sub.get('workflow_state') not in ('submitted', 'pending_review'):
                             continue
-                        try:
-                            submitted_dt = datetime.fromisoformat(
-                                sub['submitted_at'].replace('Z', '+00:00')
-                            ).replace(tzinfo=None)  # strip timezone - naive UTC
-                            days_old = (now_utc - submitted_dt).days
+                        if not sub.get('submitted_at'):
+                            continue
 
-                            if is_disc:
-                                if days_old > 7:
-                                    disc_7days += 1
-                                    disc_4days += 1
-                                elif days_old > 4:
-                                    disc_4days += 1
-                            else:
-                                if days_old > 7:
-                                    other_7days += 1
-                                    other_4days += 1
-                                elif days_old > 4:
-                                    other_4days += 1
-                        except Exception:
-                            continue
+                        if is_disc:
+                            disc_7days += 1
+                        else:
+                            other_7days += 1
+
                 except Exception:
                     continue
 
         except Exception as e:
             return {
-                'discussion_not_graded_4days': 0,
                 'discussion_not_graded_7days': 0,
-                'other_not_graded_4days':      0,
                 'other_not_graded_7days':      0,
                 '_error': f'Submissions API: {e}'
             }
 
         return {
-            'discussion_not_graded_4days': disc_4days,
             'discussion_not_graded_7days': disc_7days,
-            'other_not_graded_4days':      other_4days,
             'other_not_graded_7days':      other_7days,
         }
 
