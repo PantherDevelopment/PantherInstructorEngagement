@@ -49,7 +49,6 @@ class ExcelReportGenerator:
     # Keys that should be center-aligned
     CENTER_KEYS = {
         'total_activity_time', 'login_count_week',
-        'discussion_posts_week', 'discussion_posts_total',
         'discussion_replies_week', 'discussion_replies_total',
         'discussion_not_graded_7days', 'other_not_graded_7days',
         'announcements_count', 'instructor_bio_complete'

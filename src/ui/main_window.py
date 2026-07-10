@@ -199,13 +199,24 @@ class MainWindow(QMainWindow):
         """)
         main.addWidget(self.progress_bar)
 
+        # Cancel button (hidden until report generation starts)
+        self.cancel_btn = QPushButton("Cancel Report")
+        self.cancel_btn.setVisible(False)
+        self.cancel_btn.setMaximumWidth(200)
+        self.cancel_btn.clicked.connect(self.cancel_report)
+        cancel_row = QHBoxLayout()
+        cancel_row.addStretch()
+        cancel_row.addWidget(self.cancel_btn)
+        cancel_row.addStretch()
+        main.addLayout(cancel_row)
+
         self.status_label = QLabel("")
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         main.addWidget(self.status_label)
 
         footer = QLabel("Developed by Darby Proctor, Ph.D.")
         footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        footer.setStyleSheet("color: #666; font-size: 14px;")
+        footer.setStyleSheet("font-size: 14px;")
         main.addWidget(footer)
 
     def create_header(self) -> QWidget:
@@ -222,7 +233,7 @@ class MainWindow(QMainWindow):
         title = QLabel("Panther Instructor Engagement")
         title.setStyleSheet(f"color: {self.config.primary_color}; font-size: 32px; font-weight: bold;")
         subtitle = QLabel("Monitor Instructor Activity and Engagement")
-        subtitle.setStyleSheet("color: #000000; font-size: 18px;")
+        subtitle.setStyleSheet("font-size: 18px;")
         text.addWidget(title)
         text.addWidget(subtitle)
         layout.addLayout(text)
@@ -234,8 +245,14 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout()
 
         # Info banner
+        from src.utils.theme import get_palette, is_dark_mode
+        p = get_palette(self.config.primary_color, self.config.secondary_color, is_dark_mode())
         info = QLabel("At least one filter must be filled before searching")
-        info.setStyleSheet("color: #C62828; padding: 8px; background-color: #FFEBEE; border-radius: 4px; font-size: 14px; font-weight: bold;")
+        info.setStyleSheet(
+            f"color: {p['error_text']}; padding: 8px; "
+            f"background-color: {p['error_bg']}; border-radius: 4px; "
+            f"font-size: 14px; font-weight: bold;"
+        )
         layout.addWidget(info)
 
         # ── Row 0: Account filter ─────────────────────────────────────────────
@@ -269,7 +286,9 @@ class MainWindow(QMainWindow):
         self.year_filter = QComboBox()
         self.year_filter.addItem("")
         current_year = datetime.now().year
-        for y in range(current_year - 3, current_year + 2):
+        # Reverse chronological (most recent first), no future year
+        # until it actually arrives
+        for y in range(current_year, current_year - 4, -1):
             self.year_filter.addItem(str(y))
         row2.addWidget(self.year_filter)
 
@@ -336,21 +355,60 @@ class MainWindow(QMainWindow):
     def create_menu_bar(self):
         menubar = self.menuBar()
 
-        about_menu = menubar.addMenu("About")
+        help_menu = menubar.addMenu("Help")
 
         version_action = QAction("About Panther Instructor Engagement", self)
         version_action.triggered.connect(self.show_about)
-        about_menu.addAction(version_action)
+        help_menu.addAction(version_action)
 
         guide_action = QAction("User Guide", self)
         guide_action.triggered.connect(self.show_user_guide)
-        about_menu.addAction(guide_action)
+        help_menu.addAction(guide_action)
 
-        about_menu.addSeparator()
+        help_menu.addSeparator()
 
         update_action = QAction("Check for Updates", self)
         update_action.triggered.connect(self.check_for_updates_manual)
-        about_menu.addAction(update_action)
+        help_menu.addAction(update_action)
+
+        help_menu.addSeparator()
+
+        reset_action = QAction("Reset Canvas Settings", self)
+        reset_action.triggered.connect(self.reset_canvas_settings)
+        help_menu.addAction(reset_action)
+
+    def reset_canvas_settings(self):
+        """Clear stored Canvas URL and API token so they can be re-entered"""
+        reply = QMessageBox.question(
+            self,
+            "Reset Canvas Settings",
+            "This will remove your saved Canvas URL and API token.\n\n"
+            "Use this if you changed institutions or your API token "
+            "expired.\n\n"
+            "The application will close. When you reopen it, you will be "
+            "prompted to enter your Canvas URL and a new API token.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            for key in ("canvas_url", "canvas_token"):
+                try:
+                    keyring.delete_password("PantherInstructorEngagement", key)
+                except Exception:
+                    pass  # entry may not exist
+            QMessageBox.information(
+                self,
+                "Settings Reset",
+                "Canvas settings cleared. The application will now close.\n\n"
+                "Reopen it to enter your new Canvas URL and API token."
+            )
+            QApplication.quit()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not reset settings:\n\n{e}")
 
     def show_about(self):
         """Show about dialog with version number"""
@@ -802,6 +860,8 @@ is available you will be given a direct link to download the latest version.</p>
         self.progress_bar.setMaximum(total)
         self.progress_bar.setValue(0)
         self.progress_bar.setFormat(f"Collecting data: 0 of {total} courses")
+        self.cancel_btn.setVisible(True)
+        self._report_cancelled = False
         self.status_label.setText("Starting data collection...")
         QApplication.processEvents()
 
@@ -813,6 +873,9 @@ is available you will be given a direct link to download the latest version.</p>
         self._report_save_path = save_path
         self._report_week_type = week_type
         self._report_fallbacks = fallback_courses
+        # Shared mutable flag passed into every worker so they can check
+        # cancellation cooperatively between batches/topics.
+        self._report_cancel_flag = [False]
 
         # ── Launch workers ────────────────────────────────────────────────────
         from PyQt6.QtCore import QThreadPool
@@ -828,25 +891,84 @@ is available you will be given a direct link to download the latest version.</p>
 
         for course, period_start, period_end, effective_period in courses_with_dates:
             worker = CourseWorker(
-                collector     = collector,
-                course        = course,
-                period_start  = period_start,
-                period_end    = period_end,
-                period        = effective_period,
-                completed_ref = self._report_completed,
-                total         = total
+                collector       = collector,
+                course          = course,
+                period_start    = period_start,
+                period_end      = period_end,
+                period          = effective_period,
+                completed_ref   = self._report_completed,
+                total           = total,
+                cancel_flag_ref = self._report_cancel_flag
             )
             worker.signals.finished.connect(self._on_course_complete)
             worker.signals.error.connect(self._on_course_error)
             worker.signals.progress.connect(self._on_progress_update)
             pool.start(worker)
 
+    def cancel_report(self):
+        """
+        Cancel report generation. The cancellation flag is set FIRST,
+        before showing any dialog, so that no worker signal arriving
+        while the confirmation dialog is open can slip past _check_complete
+        and finalize the report behind the user's back. The confirmation
+        dialog only decides whether the partial results get saved.
+        """
+        from PyQt6.QtCore import QThreadPool, QTimer
+
+        # Set BOTH flags immediately, before any modal dialog runs.
+        # _report_cancel_flag is shared with running workers so they can
+        # stop early (checked between batches/topics in the collector).
+        # _report_cancelled blocks _check_complete from auto-finalizing.
+        self._report_cancelled = True
+        self._report_cancel_flag[0] = True
+
+        pool = QThreadPool.globalInstance()
+        pool.clear()  # drop any queued-but-not-yet-started workers
+
+        self.cancel_btn.setEnabled(False)
+        self.status_label.setText("Cancelling...")
+
+        collected = len(self._report_results)
+        reply = QMessageBox.question(
+            self,
+            "Cancel Report",
+            f"Data has been collected for {collected} of {self._report_total} "
+            f"course(s) so far.\n\n"
+            f"Save a report with the courses collected so far?\n\n"
+            f"Yes = save partial report\n"
+            f"No = discard and stop",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        self._save_partial = (reply == QMessageBox.StandardButton.Yes)
+
+        self.status_label.setText("Cancelling - waiting for in-progress courses to finish...")
+
+        # Poll until active workers drain, then finalize or discard.
+        # Workers should now stop quickly since they check the cancel
+        # flag between batches/topics rather than running to completion.
+        self._cancel_timer = QTimer(self)
+        self._cancel_timer.setInterval(300)
+        def _check_drained():
+            if pool.activeThreadCount() == 0:
+                self._cancel_timer.stop()
+                if self._save_partial and self._report_results:
+                    self._finalize_report(cancelled=True)
+                else:
+                    self.generate_btn.setEnabled(True)
+                    self.progress_bar.setVisible(False)
+                    self.cancel_btn.setVisible(False)
+                    self.cancel_btn.setEnabled(True)
+                    self.status_label.setText("Report cancelled")
+        self._cancel_timer.timeout.connect(_check_drained)
+        self._cancel_timer.start()
+
     def _on_progress_update(self, completed: int, total: int):
         """Update progress bar as each course finishes"""
         self.progress_bar.setValue(completed)
         self.progress_bar.setFormat(f"Collecting data: {completed} of {total} courses")
         self.status_label.setText(f"Collecting data: {completed} of {total} courses complete...")
-        # Don't finalize here - wait for _check_complete after data is appended
+        # Don't finalize here - _check_complete runs after data is appended
 
     def _on_course_complete(self, data: dict):
         """Called when a course worker finishes successfully"""
@@ -860,11 +982,13 @@ is available you will be given a direct link to download the latest version.</p>
 
     def _check_complete(self):
         """Finalize only when all workers have reported back"""
+        if getattr(self, '_report_cancelled', False):
+            return  # cancel path finalizes via its own timer
         total_received = len(self._report_results) + len(self._report_errors)
         if total_received >= self._report_total:
             self._finalize_report()
 
-    def _finalize_report(self):
+    def _finalize_report(self, cancelled: bool = False):
         """Generate Excel file once all workers are done"""
         from src.utils.excel_generator import ExcelReportGenerator
 
@@ -876,9 +1000,24 @@ is available you will be given a direct link to download the latest version.</p>
 
         self.generate_btn.setEnabled(True)
         self.progress_bar.setVisible(False)
+        self.cancel_btn.setVisible(False)
+        self.cancel_btn.setEnabled(True)
+
+        # Detect expired/invalid API token across worker errors
+        auth_failures = [e for e in errors
+                         if 'Invalid API token' in e or '401' in e]
+        if auth_failures:
+            QMessageBox.warning(
+                self,
+                "Canvas Authentication Problem",
+                "Some or all courses failed because your Canvas API token "
+                "appears to be invalid or expired.\n\n"
+                "Use Help → Reset Canvas Settings to enter a new token."
+            )
 
         if not all_data:
-            QMessageBox.warning(self, "No Data", "No engagement data could be collected.")
+            if not auth_failures:
+                QMessageBox.warning(self, "No Data", "No engagement data could be collected.")
             self.status_label.setText("⚠ No data collected")
             return
 
@@ -917,13 +1056,20 @@ is available you will be given a direct link to download the latest version.</p>
                     + '\n'.join(f"  • {e}" for e in errors)
                 )
 
+            cancel_note = ''
+            if cancelled:
+                cancel_note = (
+                    f"\n\n⚠ Report was cancelled - contains "
+                    f"{len(all_data)} of {self._report_total} selected course(s)."
+                )
+
             QMessageBox.information(
                 self, "Report Generated",
                 f"Report saved successfully!\n\n"
                 f"Courses: {len(all_data)}\n"
                 f"File: {Path(save_path).name}\n"
                 f"Location: {Path(save_path).parent}"
-                + fallback_note + error_note
+                + cancel_note + fallback_note + error_note
             )
             self.status_label.setText(f"✓ Report saved: {Path(save_path).name}")
 
@@ -933,62 +1079,22 @@ is available you will be given a direct link to download the latest version.</p>
 
     # ── Styles ────────────────────────────────────────────────────────────────
     def apply_styles(self):
-        primary   = self.config.primary_color
-        secondary = self.config.secondary_color
-
-        self.setStyleSheet(f"""
-            QMainWindow {{ background-color: white; }}
-            QLabel {{ color: #333333; font-size: 16px; }}
-            QGroupBox {{
-                font-weight: bold; font-size: 17px;
-                border: 2px solid {secondary}; border-radius: 5px;
-                margin-top: 10px; padding-top: 10px;
-            }}
-            QGroupBox::title {{
-                color: {primary}; subcontrol-origin: margin;
-                left: 10px; padding: 0 5px;
-            }}
-            QPushButton {{
-                background-color: {primary}; color: white;
-                border: none; padding: 12px 24px;
-                border-radius: 4px; font-weight: bold; font-size: 16px;
-            }}
-            QPushButton:hover {{ background-color: #5a0000; }}
-            QPushButton:disabled {{ background-color: #CCCCCC; color: #666666; }}
-            QLineEdit {{
-                padding-left: 12px; padding-right: 12px;
-                padding-top: 8px; padding-bottom: 8px;
-                border: 2px solid {secondary}; border-radius: 4px;
-                font-size: 16px; min-height: 25px;
-            }}
-            QLineEdit:focus {{ border-color: {primary}; }}
-            QComboBox {{
-                padding-left: 12px; padding-right: 30px;
-                padding-top: 8px; padding-bottom: 8px;
-                border: 2px solid {secondary}; border-radius: 4px;
-                font-size: 16px; min-height: 25px;
-            }}
-            QComboBox:focus {{ border-color: {primary}; }}
-            QComboBox QAbstractItemView {{
-                border: 2px solid {secondary};
-                selection-background-color: {primary};
-                selection-color: white; font-size: 16px;
-            }}
-            QListWidget {{
-                border: 2px solid {secondary}; border-radius: 4px;
-                font-size: 16px; padding: 5px;
-            }}
-            QListWidget::item {{ padding: 2px; }}
-            QListWidget::item:selected {{
-                background-color: {primary}; color: white;
-            }}
-            QRadioButton {{ font-size: 16px; }}
-        """)
+        from src.utils.theme import apply_theme, is_dark_mode
+        self.setStyleSheet(apply_theme(
+            primary=self.config.primary_color,
+            secondary=self.config.secondary_color,
+            dark_mode=is_dark_mode()
+        ))
 
 
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()
+
+    # Live-update styling if the user switches OS light/dark mode
+    # while the app is running
+    app.styleHints().colorSchemeChanged.connect(window.apply_styles)
+
     window.show()
     sys.exit(app.exec())
 

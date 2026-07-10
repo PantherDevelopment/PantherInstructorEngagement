@@ -31,7 +31,8 @@ class CourseWorker(QRunnable):
         period_end: datetime,
         period: str,
         completed_ref: list,
-        total: int
+        total: int,
+        cancel_flag_ref: list = None
     ):
         super().__init__()
         self.collector    = collector
@@ -41,8 +42,15 @@ class CourseWorker(QRunnable):
         self.period       = period
         self.completed    = completed_ref
         self.total        = total
+        # Shared mutable flag: cancel_flag_ref[0] is True once the user
+        # has clicked Cancel. Checked between batches inside the collector
+        # so a worker can stop early instead of finishing all 6 batches.
+        self.cancel_flag  = cancel_flag_ref
         self.signals      = WorkerSignals()
         self.setAutoDelete(True)
+
+    def _is_cancelled(self) -> bool:
+        return bool(self.cancel_flag and self.cancel_flag[0])
 
     def run(self):
         """Runs in a background thread - do NOT touch UI here"""
@@ -67,7 +75,8 @@ class CourseWorker(QRunnable):
                 str(instructor_id),
                 self.period_start,
                 self.period_end,
-                self.period
+                self.period,
+                cancel_check=self._is_cancelled
             )
 
             data['course_code']     = course_code
